@@ -9,7 +9,7 @@ let container;
 
 let camera, scene, renderer, arrow, controls, step, clock, stepPoints;
 
-let npc, npcMixer, standAction, walkAction, segment, relativeCameraOffset;
+let npc, npcMixer, walkAction, segment, relativeCameraOffset;
 
 init();
 function init() {
@@ -85,7 +85,7 @@ function init() {
         ];
 
         // 将数组转为坐标数组
-        let points = [];
+        const points = [];
 
         // 每3个元素组成一个坐标
         for (let i = 0; i < pointArr.length; i += 3) {
@@ -172,7 +172,7 @@ function init() {
             npcMixer = new THREE.AnimationMixer(npc);
 
             // 截取第二个动画，作为站立动画
-            standAction = npcMixer.clipAction(obj.animations[1]);
+            //standAction = npcMixer.clipAction(obj.animations[1]);
 
             // 默认播放站立动画, 不然会展现“T-Pose”
             //walkAction.play();

@@ -13,13 +13,14 @@ let sword;
 let swordInstance;
 const moveRange = [200, -50];
 const rotationSpeed = 0.1;
-const moveSpeed = -0.8;
+const gravity = -9.8 * 2;
 const instanceCount = 600;
-let originOffset = [];
-let originAngle = [];
+const originOffset = [];
+const originAngle = [];
+const velocities = [];
 const axis = new THREE.Vector3(0, 1, 0);
 const boxCenter = new THREE.Vector3();
-const originScale = new THREE.Vector3(1, 1, 1);
+//const originScale = new THREE.Vector3(1, 1, 1);
 
 init();
 function init() {
@@ -35,7 +36,7 @@ function init() {
 
     clock = new THREE.Clock();
 
-    const axesHelper = new THREE.AxesHelper(5);
+    //const axesHelper = new THREE.AxesHelper(5);
     //scene.add(axesHelper);
 
     const light = new THREE.DirectionalLight(0xFFFFFF, 3.5);
@@ -79,12 +80,12 @@ function init() {
                         swordInstance = new THREE.InstancedMesh(group.children[0].geometry, material, instanceCount);
                         swordInstance.frustumCulled = false;
 
-                        group.children[0].geometry.computeBoundingBox()
+                        group.children[0].geometry.computeBoundingBox();
                         group.children[0].geometry.boundingBox.getCenter(boxCenter);
 
                         const offset = new THREE.Vector3();
                         //const scale = new THREE.Vector3(1, 1, 1);
-                        let x, y, z, w;
+                        let x, y, z;
                         for (let i = 0; i < instanceCount; i++) {
 
                             // offsets
@@ -95,12 +96,14 @@ function init() {
 
                             offset.set(x, y, z).normalize();
                             offset.multiplyScalar(60); // move out at least 5 units from center in current direction
-                            offset.set(x + offset.x, 0, z + offset.z);
+                            offset.set(x + offset.x, moveRange[0] + Math.random() * 100 - 100, z + offset.z);
 
                             originOffset.push(offset.x, offset.y, offset.z);
 
-                            let angle = (Math.random() * 2 - 1) * Math.PI;
+                            const angle = (Math.random() * 2 - 1) * Math.PI;
                             originAngle.push(angle);
+
+                            velocities.push(Math.random() * 5);
                         }
 
 
@@ -108,7 +111,7 @@ function init() {
                         swordInstance.instanceMatrix.setUsage(THREE.DynamicDrawUsage); // will be updated every frame
                         // swordInstance.castShadow = true;
                         // swordInstance.receiveShadow = true;
-                        sword.add(swordInstance)
+                        sword.add(swordInstance);
                         //sword.position.y = moveRange[0];
 
                         // 将NPC模型添加到场景
@@ -137,24 +140,25 @@ function onWindowResize() {
 
 //
 
-function updateSword() {
+function updateSword(deltaTime) {
     const posMatrix = new THREE.Matrix4();
     posMatrix.makeTranslation(boxCenter.x, boxCenter.y, boxCenter.z);
     const invtPosMatrix = posMatrix.clone().invert();
     const offsetMatrix = new THREE.Matrix4();
     const rotationMatrix = new THREE.Matrix4();
     const offset = new THREE.Vector3();
-    const orientation = new THREE.Quaternion();
-    let x, y, z, w;
+    let x, y, z;
     for (let i = 0; i < instanceCount; i++) {
 
         // offsets
 
         if (originOffset[i * 3 + 1] < moveRange[1]) {
             originOffset[i * 3 + 1] = moveRange[0];
+            velocities[i] = Math.random() * 5;
         }
 
-        originOffset[i * 3 + 1] += moveSpeed;
+        velocities[i] += gravity * deltaTime;
+        originOffset[i * 3 + 1] += velocities[i] * deltaTime;
 
         x = originOffset[i * 3];
         y = originOffset[i * 3 + 1];
@@ -167,7 +171,8 @@ function updateSword() {
         // orientation
         originAngle[i] += rotationSpeed;
         rotationMatrix.makeRotationAxis(axis, originAngle[i]);
-        offsetMatrix.multiply(rotationMatrix).multiply(invtPosMatrix)
+        //move to origin first then rotate then remove
+        offsetMatrix.multiply(rotationMatrix).multiply(invtPosMatrix);
 
         //matrix.compose(offset, orientation, originScale);
         swordInstance.setMatrixAt(i, offsetMatrix);
@@ -177,8 +182,8 @@ function updateSword() {
 
 function animate() {
 
-    const delta = clock.getDelta();
-    updateSword();
+    const deltaTime = clock.getDelta();
+    updateSword(deltaTime);
     renderer.render(scene, camera);
 
 
