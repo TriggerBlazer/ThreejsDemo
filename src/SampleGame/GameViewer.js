@@ -5,6 +5,10 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import TWEEN from 'three/examples/jsm/libs/tween.module.js';
 
 
 
@@ -16,6 +20,12 @@ const rotationMatrix = new THREE.Matrix4();
 const offsetMatrix = new THREE.Matrix4();
 const offsetHeardMatrix = new THREE.Matrix4();
 const mainAxis = new THREE.Vector3(0, 1, 0);
+const scratchVector_1 = new THREE.Vector3();
+const scratchHeadMatrix_1 = new THREE.Matrix4();
+const scratchQuaternion_1 = new THREE.Quaternion();
+const controlPoint = new THREE.Vector3();
+const defaultScale = new THREE.Vector3(1, 1, 1);
+
 
 class GameViewer {
     constructor() {
@@ -41,6 +51,8 @@ class GameViewer {
         this.swordCount = 50;
         this.swordPosMatrix = new THREE.Matrix4();
         this.swordRotateAngel = 0.0;
+        this.swordShottingDistance = 0.0;
+        this.swordShottingMaxDistance = 20.0;
 
         this.controls = {
 
@@ -60,6 +72,15 @@ class GameViewer {
             rotateSpeed: 0.05,
             floorDecale: 0,
             swordRotationVelocity: 1,
+            swordShottingVelocity: 0,
+            swordShottingAcceleration: 50,
+        };
+
+        this.attackMode = {
+            swordReady: false,
+            pickUpSword: false,
+            shotSwordReady: false,
+            shotSword: false
         };
     }
 
@@ -120,7 +141,6 @@ class GameViewer {
         this.orbitControls.update();
 
 
-
         const rgbeLoader = new RGBELoader().setPath('/textures/equirectangular/');
         const glbLoader = new GLTFLoader();
 
@@ -133,6 +153,10 @@ class GameViewer {
             mTLLoader.loadAsync('Sword.mtl'),
         ]);
 
+        this.attackMode.swordReady = true;
+        this.rotateRadius = 1.5;
+        this.attackRadius = 4.0;
+        this.attackTargets = [];
 
         // 修正贴图路径
         swordMaterials.materialsInfo['Material.001']['map_kd'] = '195s_497_ud5be.jpg';
@@ -182,8 +206,8 @@ class GameViewer {
         const rotateSeg = PI * 2 / this.swordCount;
         // 默认垂直向下，先移动到原点，然后剑尖抬起90度，超前移动一定距离，然后绕圆心旋转,最后整体向上
         for (let i = 0; i < this.swordCount; i++) {
-            offsetMatrix.makeTranslation(0, 1, 0);
-            offsetHeardMatrix.makeTranslation(0, 0, 1.5);
+            offsetMatrix.makeTranslation(0, this.manHeight, 0);
+            offsetHeardMatrix.makeTranslation(0, 0, this.rotateRadius);
             const angle = rotateSeg * i + initAngle;
             rotationMatrix.makeRotationAxis(mainAxis, angle);
             offsetMatrix.multiply(rotationMatrix).multiply(offsetHeardMatrix).multiply(rotationHeadMatrix).multiply(this.swordPosMatrix);
@@ -246,6 +270,27 @@ class GameViewer {
         }
 
         this.actions.Idle.play();
+        this.manHeight = 2.0 / 2.0;
+        this.aimingPoint = new THREE.Vector3(0, this.manHeight, 10);
+
+
+        const lineMaterial = new LineMaterial({
+            color: 0x0000ff,
+            linewidth: 3,
+
+            dashed: false,
+            alphaToCoverage: true,
+
+        });
+        const points = [];
+        points.push(0, this.manHeight, 0.0);
+        points.push(this.aimingPoint.x, this.aimingPoint.y, this.aimingPoint.z);
+
+        const lineGeometry = new LineGeometry().setPositions(points);
+        this.aimingLine = new Line2(lineGeometry, lineMaterial);
+        this.aimingLine.computeLineDistances();
+        this.aimingLine.scale.set(1, 1, 1);
+        this.scene.add(this.aimingLine);
     }
 
     initFloor() {
@@ -288,6 +333,7 @@ class GameViewer {
         const deltaTime = this.clock.getDelta();
         this.updateCharacter(deltaTime);
         this.updateSword(deltaTime);
+        TWEEN.update();
         this.renderer.render(this.scene, this.camera);
     }
 
@@ -375,7 +421,6 @@ class GameViewer {
             this.modelGroup.position.copy(position);
             this.modelGroup.quaternion.rotateTowards(rotate, this.controls.rotateSpeed);
             this.swordInstance.position.copy(position);
-
             this.orbitControls.target.copy(position).add({ x: 0, y: 1, z: 0 });
             this.followGroup.position.copy(position);
 
@@ -386,19 +431,141 @@ class GameViewer {
             if (Math.abs(dz) > this.controls.floorDecale) this.floor.position.z += dz;
 
         }
+        this.aimingLine.position.copy(this.modelGroup.position);
+        this.aimingLine.quaternion.copy(this.modelGroup.quaternion);
 
         this.mixer.update(delta);
         this.orbitControls.update();
 
     }
 
+    unAttack() {
+        this.attackMode.swordReady = true;
+        this.attackMode.shotSword = false;
+        this.attackMode.pickUpSword = false;
+    }
+
+    pickUpSword() {
+        if (this.attackMode.shotSword === true) return;
+        this.attackMode.swordReady = false;
+        if (this.attackMode.shotSwordReady === true) {
+            this.attackMode.shotSwordReady = false;
+            this.attackMode.shotSword = true;
+            return;
+        }
+        this.attackMode.pickUpSword = true;
+        this.pickUpSwordTimeStart = Date.now();
+        return;
+        TWEEN.removeAll();
+        this.attackTargets = [];
+        const duration = 2000;
+        for (let i = 0; i < this.swordCount; i++) {
+            scratchVector_1.set(Math.random() - 0.5, Math.random() * 0.5, Math.random() - 0.5);
+            controlPoint.copy(scratchVector_1).multiplyScalar(this.attackRadius).add(this.aimingPoint.clone());
+            controlPoint.applyMatrix4(this.aimingLine.matrixWorld);
+
+            const object = new THREE.Object3D();
+            object.position.copy(this.aimingPoint.clone().applyMatrix4(this.aimingLine.matrixWorld));
+            object.lookAt(controlPoint.multiplyScalar(1));
+
+            this.swordInstance.getMatrixAt(i, scratchHeadMatrix_1);
+            scratchHeadMatrix_1.decompose(scratchVector_1, scratchQuaternion_1, new THREE.Vector3());
+
+            const curDuration = Math.random() * duration + duration;
+            new TWEEN.Tween({ pos: scratchVector_1, qu: scratchQuaternion_1 })
+                .to({ pos: object.position, qu: object.quaternion }, curDuration)
+                .easing(TWEEN.Easing.Back.Out)
+                .onUpdate((info) => {
+                    scratchHeadMatrix_1.compose(info.pos, info.qu, defaultScale);
+                    this.swordInstance.setMatrixAt(i, scratchHeadMatrix_1);
+                    this.swordInstance.instanceMatrix.needsUpdate = true;
+                })
+                .start((i + 1) * 500);
+
+            // const points = [];
+            // points.push(scratchVector_1.add(this.swordCenter).add(new THREE.Vector3(0, this.manHeight, 0)));
+            // points.push(controlPoint);
+            // points.push(this.aimingPoint.clone().applyMatrix4(this.aimingLine.matrixWorld));
+
+            // const pathCurve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 1.0);
+            // const points2 = pathCurve.getPoints(100);
+            // const geometry = new THREE.BufferGeometry().setFromPoints(points2);
+
+            // const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+
+            // const curveObject = new THREE.Line(geometry, material);
+            // this.scene.add(curveObject);
+
+            // offsetMatrix.makeTranslation(0, this.rotateRadius, 0);
+            // offsetHeardMatrix.makeTranslation(0, 0, this.manHeight);
+            // const angle = rotateSeg * i + initAngle;
+            // rotationMatrix.makeRotationAxis(mainAxis, angle);
+            // offsetMatrix.multiply(rotationMatrix).multiply(offsetHeardMatrix).multiply(rotationHeadMatrix).multiply(this.swordPosMatrix);
+            // this.swordInstance.setMatrixAt(i, offsetMatrix);
+        }
+
+    }
+
 
     updateSword(deltaTime) {
-        this.swordRotateAngel += this.controls.swordRotationVelocity * deltaTime;
-        if (this.swordRotateAngel >= 2 * Math.PI) {
-            this.swordRotateAngel = this.swordRotateAngel - 2 * Math.PI;
+        const mainSwordIndex = this.swordCount / 2;
+        if (this.attackMode.swordReady === true) {
+            this.swordRotateAngel += this.controls.swordRotationVelocity * deltaTime;
+            if (this.swordRotateAngel >= 2 * Math.PI) {
+                this.swordRotateAngel = this.swordRotateAngel - 2 * Math.PI;
+            }
+            this.updateSwordAngle(this.swordRotateAngel);
+        } else if (this.attackMode.pickUpSword === true) {
+            const timeNow = Date.now();
+            const timePassed = (timeNow - this.pickUpSwordTimeStart) / 20;
+            const unKnowMatrix = new THREE.Matrix4().makeTranslation(NaN, NaN, NaN);
+            const rotateSeg = PI * 2 / this.swordCount;
+            this.swordInstance.setMatrixAt(0, unKnowMatrix);
+            for (let i = 0; i < mainSwordIndex; i++) {
+                if (timePassed > mainSwordIndex) {
+                    this.attackMode.pickUpSword = false;
+                    this.attackMode.shotSwordReady = true;
+                    return;
+                }
+                if (i >= mainSwordIndex - timePassed) {
+                    this.swordInstance.setMatrixAt(mainSwordIndex + i, unKnowMatrix);
+                    this.swordInstance.setMatrixAt(mainSwordIndex - i, unKnowMatrix);
+                    continue;
+                }
+                offsetMatrix.makeTranslation(0, this.manHeight, 0);
+                offsetHeardMatrix.makeTranslation(0, 0, this.rotateRadius);
+                const angle1 = PI + i * rotateSeg;
+                rotationMatrix.makeRotationAxis(mainAxis, angle1);
+                offsetMatrix.multiply(rotationMatrix).multiply(offsetHeardMatrix).multiply(rotationHeadMatrix).multiply(this.swordPosMatrix);
+                this.swordInstance.setMatrixAt(mainSwordIndex + i, offsetMatrix);
+                offsetMatrix.makeTranslation(0, this.manHeight, 0);
+                offsetHeardMatrix.makeTranslation(0, 0, this.rotateRadius);
+                const angle2 = PI - i * rotateSeg;
+                rotationMatrix.makeRotationAxis(mainAxis, angle2);
+                offsetMatrix.multiply(rotationMatrix).multiply(offsetHeardMatrix).multiply(rotationHeadMatrix).multiply(this.swordPosMatrix);
+                this.swordInstance.setMatrixAt(mainSwordIndex - i, offsetMatrix);
+            }
+            this.swordInstance.instanceMatrix.needsUpdate = true;
+        } else if (this.attackMode.shotSwordReady === true) {
+            offsetMatrix.makeTranslation(0, this.manHeight, 0);
+            rotationMatrix.makeRotationFromQuaternion(this.modelGroup.quaternion);
+            offsetMatrix.multiply(rotationMatrix).multiply(offsetHeardMatrix).multiply(rotationHeadMatrix).multiply(this.swordPosMatrix);
+            this.swordInstance.setMatrixAt(mainSwordIndex, offsetMatrix);
+            this.swordInstance.instanceMatrix.needsUpdate = true;
+        } else if (this.attackMode.shotSword === true) {
+            this.controls.swordShottingVelocity += this.controls.swordShottingAcceleration * deltaTime;
+            this.swordShottingDistance += this.controls.swordShottingVelocity * deltaTime;
+            offsetMatrix.makeTranslation(0, this.manHeight, 0);
+            offsetHeardMatrix.makeTranslation(0, 0, this.rotateRadius + this.swordShottingDistance);
+            rotationMatrix.makeRotationFromQuaternion(this.modelGroup.quaternion);
+            offsetMatrix.multiply(rotationMatrix).multiply(offsetHeardMatrix).multiply(rotationHeadMatrix).multiply(this.swordPosMatrix);
+            this.swordInstance.setMatrixAt(mainSwordIndex, offsetMatrix);
+            this.swordInstance.instanceMatrix.needsUpdate = true;
+            if (this.swordShottingDistance >= this.swordShottingMaxDistance) {
+                this.controls.swordShottingVelocity = 0.0;
+                this.swordShottingDistance = 0.0;
+            }
         }
-        this.updateSwordAngle(this.swordRotateAngel);
     }
 
     unwrapRad(r) {
@@ -422,6 +589,8 @@ class GameViewer {
             case 'ArrowRight': case 'KeyD': key.moveRight(); break;
             case 'ShiftLeft': case 'ShiftRight': key.run(); break;
             case 'Space': key.moveUp(); break;
+            case 'KeyJ': this.pickUpSword(); break;
+            case 'KeyK': this.unAttack(); break;
         }
 
     }
